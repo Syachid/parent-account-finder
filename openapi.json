@@ -1,0 +1,298 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Parent Account Finder",
+    "description": "On-demand lookup tool for Sales Ops: paste or upload an Account ID or Opportunity ID and see whether that Account has likely duplicate-name matches that should be grouped under one Parent Account. Read-only against the SalesCRM.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness/readiness probe used by the platform.",
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "summary": "Returns the caller's identity from the platform's SSO forwarding headers (null fields when SSO is off or in local dev).",
+        "responses": {
+          "200": {
+            "description": "Current user identity.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Me" } } }
+          }
+        }
+      }
+    },
+    "/api/sync/crm": {
+      "post": {
+        "summary": "Starts a background sync of the local Account mirror from the SalesCRM (Indonesia Accounts only) and returns immediately; poll /api/sync/status for progress.",
+        "responses": {
+          "200": {
+            "description": "Sync started, already running, or could not start.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SyncStartResult" } } }
+          }
+        }
+      }
+    },
+    "/api/sync/status": {
+      "get": {
+        "summary": "Returns whether a mirror sync is currently running, when the mirror was last synced, and the last sync's result.",
+        "responses": {
+          "200": {
+            "description": "Current sync status.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SyncStatus" } } }
+          }
+        }
+      }
+    },
+    "/api/lookup": {
+      "get": {
+        "summary": "Resolves a single Account ID or Opportunity ID and returns that Account's candidate duplicate-name groups (exact name, fuzzy name, shared phone/NPWP/identification number), each with current and suggested Parent Account.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "integer" },
+            "description": "An Account ID or an Opportunity ID (auto-detected)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lookup result for the given id.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LookupResult" } } }
+          },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    },
+    "/api/lookup/batch": {
+      "post": {
+        "summary": "Starts a background batch lookup for a pasted list of Account/Opportunity IDs and returns a job id; poll /api/lookup/batch/{job_id}/status for progress.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Raw ID strings, one per pasted line; deduplicated and coerced to integers server-side."
+                  }
+                },
+                "required": ["ids"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch job started.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchStartResult" } } }
+          },
+          "400": { "description": "No valid IDs provided, or too many IDs." },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    },
+    "/api/upload": {
+      "post": {
+        "summary": "Uploads an .xlsx file whose first column holds a mixed list of Account/Opportunity IDs and starts the same background batch lookup as /api/lookup/batch.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": { "file": { "type": "string", "format": "binary" } },
+                "required": ["file"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch job started.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchStartResult" } } }
+          },
+          "400": { "description": "File unreadable, no valid IDs found, or too many IDs." },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    },
+    "/api/lookup/batch/{job_id}/status": {
+      "get": {
+        "summary": "Returns a batch lookup job's progress (running/done/error, processed/total counts).",
+        "parameters": [
+          { "name": "job_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BatchStatus" } } }
+          },
+          "404": { "description": "Job not found." },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    },
+    "/api/lookup/batch/{job_id}/results": {
+      "get": {
+        "summary": "Returns a finished batch lookup job's per-ID results as JSON.",
+        "parameters": [
+          { "name": "job_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": { "type": "array", "items": { "$ref": "#/components/schemas/LookupResult" } }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Job not found." },
+          "409": { "description": "Job still running." },
+          "500": { "description": "Job failed." },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    },
+    "/api/lookup/batch/{job_id}/results.xlsx": {
+      "get": {
+        "summary": "Downloads a finished batch lookup job's results as an .xlsx workbook (one row per matched Account, plus not-found/no-duplicate rows).",
+        "parameters": [
+          { "name": "job_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Excel workbook.",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": { "description": "Results not available." },
+          "503": { "description": "Database not configured." }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": { "status": { "type": "string" } }
+      },
+      "Me": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "nullable": true },
+          "user": { "type": "string", "nullable": true }
+        }
+      },
+      "SyncResult": {
+        "type": "object",
+        "properties": {
+          "accounts_seen": { "type": "integer" },
+          "upserted": { "type": "integer" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "SyncStartResult": {
+        "type": "object",
+        "properties": {
+          "started": { "type": "boolean" },
+          "already_running": { "type": "boolean" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "SyncStatus": {
+        "type": "object",
+        "properties": {
+          "in_progress": { "type": "boolean" },
+          "last_synced_at": { "type": "string", "nullable": true },
+          "last_result": { "allOf": [{ "$ref": "#/components/schemas/SyncResult" }], "nullable": true }
+        }
+      },
+      "BatchStartResult": {
+        "type": "object",
+        "properties": {
+          "job_id": { "type": "integer" },
+          "total": { "type": "integer" }
+        }
+      },
+      "BatchStatus": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["running", "done", "error"] },
+          "total": { "type": "integer" },
+          "processed": { "type": "integer" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "GroupMember": {
+        "type": "object",
+        "description": "One Account in a candidate duplicate group.",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "owner_id": { "type": "integer", "nullable": true },
+          "owner_name": { "type": "string", "nullable": true },
+          "current_parent_id": { "type": "integer", "nullable": true },
+          "current_parent_name": { "type": "string", "nullable": true },
+          "status": {
+            "type": "string",
+            "enum": ["is_suggested_parent", "already_under_suggested_parent", "needs_mapping"]
+          }
+        }
+      },
+      "LookupGroup": {
+        "type": "object",
+        "properties": {
+          "match_type": { "type": "string", "enum": ["exact_name", "fuzzy_name", "identity"] },
+          "matched_label": { "type": "string" },
+          "has_existing_parent": { "type": "boolean" },
+          "suggested_parent_id": { "type": "integer", "nullable": true },
+          "suggested_parent_name": { "type": "string", "nullable": true },
+          "similarity": { "type": "integer", "nullable": true, "description": "0-100, only present for fuzzy_name groups." },
+          "matched_field": { "type": "string", "nullable": true, "description": "Phone / NPWP / Identification Number, only present for identity groups." },
+          "matched_value": { "type": "string", "nullable": true },
+          "members": { "type": "array", "items": { "$ref": "#/components/schemas/GroupMember" } }
+        }
+      },
+      "LookupResult": {
+        "type": "object",
+        "properties": {
+          "input_id": { "type": "integer" },
+          "resolved": { "type": "boolean" },
+          "note": {
+            "type": "string",
+            "nullable": true,
+            "enum": ["not_in_mirror", "not_found", "opportunity_account_not_found"]
+          },
+          "account_id": { "type": "integer", "nullable": true },
+          "account_name": { "type": "string", "nullable": true },
+          "account_owner": { "type": "string", "nullable": true },
+          "current_parent_id": { "type": "integer", "nullable": true },
+          "current_parent_name": { "type": "string", "nullable": true },
+          "in_mirror": { "type": "boolean" },
+          "groups": { "type": "array", "items": { "$ref": "#/components/schemas/LookupGroup" } }
+        }
+      }
+    }
+  }
+}

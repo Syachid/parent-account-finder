@@ -9,3 +9,7 @@ description: >
 database: oceanbase
 
 # No backing services (redis/kafka/qdrant) needed — just the database above.
+
+# Skill/plugin version this app was last deployed with — stamped by
+# /substrait:deploy; do not edit by hand.
+scaffold_version: 2026.08.30.104958

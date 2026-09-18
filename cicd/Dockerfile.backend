@@ -7,6 +7,12 @@
 # (needs CAP_CHOWN) and crashloops. For a static-only backend use
 # `nginxinc/nginx-unprivileged` (rootless, no startup chown; keep `listen 8000`).
 FROM python:3.12-slim
+# Trivy scan (CVE-2026-41992 gzip, CVE-2026-86145/89157/89161 libpcre2-8-0,
+# CVE-2026-11822/11824 libsqlite3-0, CVE-2026-13221/42496/8376/42497/48962/57432/57433
+# perl-base): patch every OS package to its latest available Debian security-repo
+# version rather than pinning each CVE's package individually — covers all of the
+# above in one shot and keeps picking up future base-image CVEs on the next build.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt .
 # Wheels-only: never fall back to a source build. This slim image has no C compiler, so

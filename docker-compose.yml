@@ -1,0 +1,47 @@
+# Local development ONLY — not part of the deploy. In production the platform
+# provisions an OceanBase database and runs Flyway itself; the upload never uses this
+# file (the platform ignores anything outside cicd/, backend/ and frontend/).
+#
+# OceanBase speaks the MySQL wire protocol, so a local MySQL container is a faithful
+# stand-in: the same `asyncmy` driver, the same `%s` placeholders, and the *same*
+# Flyway migrations all run unchanged. (SQLite is NOT a drop-in — different driver,
+# different placeholders, and the MySQL-dialect migrations won't apply.)
+#
+# Fast loop: run the DB here, run the backend/frontend natively for hot reload.
+#   docker compose up -d db          # MySQL on localhost:3306
+#   docker compose run --rm migrate  # apply backend/resources/db/migration/V*.sql
+#   (backend)  DATABASE_URL=mysql://root:root@localhost:3306/app uvicorn main:app --reload
+#   (frontend) npm install && npm run dev   # Vite proxies /api -> :8000
+services:
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: app
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - dbdata:/var/lib/mysql
+
+  # One-shot: applies backend/resources/db/migration/V*.sql, same as the platform.
+  migrate:
+    image: flyway/flyway:10
+    command: >
+      -url=jdbc:mysql://db:3306/app
+      -user=root -password=root
+      -connectRetries=30
+      -locations=filesystem:/flyway/sql
+      migrate
+    volumes:
+      - ./backend/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:

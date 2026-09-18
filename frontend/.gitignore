@@ -1,0 +1,6 @@
+node_modules/
+dist/
+
+# Build-time frontend env vars (public, non-secret) — intentionally committed so
+# Vite can inline them at build time. If you start ignoring env files (.env*),
+# keep this one tracked with: !.env.production

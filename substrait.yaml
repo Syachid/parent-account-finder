@@ -1,0 +1,11 @@
+description: >
+  On-demand lookup tool for Sales Ops: paste or upload an Account ID or Opportunity ID
+  (one at a time, or a mixed-ID Excel column) and see whether that Account has likely
+  duplicate-name matches that should be grouped under one Parent Account — Account ID,
+  Account Name, Account Owner, current Parent Account, and a suggested Parent Account.
+  Read-only — never writes to CRM. Sibling app to the Account Parent-Mapping Monitor,
+  which shows the full duplicate-name dashboard instead of a per-ID lookup.
+
+database: oceanbase
+
+# No backing services (redis/kafka/qdrant) needed — just the database above.

@@ -1,0 +1,11 @@
+# Substrait CLI link state
+.substrait/
+
+# Local Claude Code permission settings — can accumulate one-off commands with
+# secrets pasted in during debugging.
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv*/

@@ -1,0 +1,21 @@
+# Backend image for Substrait. Built from the REPO ROOT, so COPY paths are
+# repo-relative (COPY backend/...). The contract is behavioural: this image must
+# EXPOSE 8000, serve GET /health (the readiness probe), and your API under /api.
+#
+# The backend container runs with ALL Linux capabilities dropped. A capless process
+# (uvicorn, etc.) is fine; stock `nginx` is NOT — it chowns /var/cache/nginx at startup
+# (needs CAP_CHOWN) and crashloops. For a static-only backend use
+# `nginxinc/nginx-unprivileged` (rootless, no startup chown; keep `listen 8000`).
+FROM python:3.12-slim
+WORKDIR /app
+COPY backend/requirements.txt .
+# Wheels-only: never fall back to a source build. This slim image has no C compiler, so
+# a dep with no wheel for this Python (e.g. an old asyncmy pinned below its first cp312
+# wheel) would otherwise die deep in a cryptic gcc/compile failure. --only-binary makes
+# that fail fast and legibly instead. If you genuinely need a source build, either pin a
+# version that ships a wheel, or add the toolchain here (apt-get install -y gcc ...) and
+# drop this flag.
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
+COPY backend/ .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

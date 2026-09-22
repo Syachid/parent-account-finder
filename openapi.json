@@ -284,6 +284,12 @@
             "nullable": true,
             "enum": ["not_in_mirror", "not_found", "opportunity_account_not_found"]
           },
+          "input_type": {
+            "type": "string",
+            "nullable": true,
+            "enum": ["account", "opportunity"],
+            "description": "Which CRM object the input id turned out to be — 'opportunity' means account_id is the Account it maps to. Null when the id resolved to nothing."
+          },
           "account_id": { "type": "integer", "nullable": true },
           "account_name": { "type": "string", "nullable": true },
           "account_owner": { "type": "string", "nullable": true },

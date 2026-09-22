@@ -82,15 +82,42 @@ function SingleResult({ result }) {
   }
   return (
     <div className="mt-4">
+      {result.input_type === "opportunity" && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-800">
+          <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium uppercase text-indigo-700">
+            Opportunity ID
+          </span>
+          <span className="font-mono">{result.input_id}</span>
+          <span className="text-indigo-400">→</span>
+          <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium uppercase text-indigo-700">
+            Account ID
+          </span>
+          <span className="font-mono font-semibold">{result.account_id}</span>
+        </div>
+      )}
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <span className="text-xs font-medium uppercase text-slate-400">Account</span>
             <div className="text-base font-semibold text-slate-900">
-              {result.account_name} <span className="font-mono text-xs text-slate-400">({result.account_id})</span>
+              {result.account_name}{" "}
+              <span className="font-mono text-sm font-semibold text-indigo-600">ID {result.account_id}</span>
             </div>
           </div>
-          <div className="text-sm text-slate-600">Owner: {result.account_owner || "—"}</div>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-slate-600">Owner: {result.account_owner || "—"}</div>
+            <button
+              onClick={() =>
+                downloadCsv(
+                  flattenBatchResults([result]),
+                  `parent_account_${result.account_id || result.input_id}.csv`,
+                )
+              }
+              className="rounded-md border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+            >
+              Download CSV
+            </button>
+          </div>
         </div>
         <div className="mt-1 text-sm text-slate-600">
           Current Parent:{" "}
@@ -116,12 +143,19 @@ function SingleResult({ result }) {
   );
 }
 
+const INPUT_TYPE_LABEL = { account: "Account", opportunity: "Opportunity" };
+
+function inputTypeLabel(inputType) {
+  return INPUT_TYPE_LABEL[inputType] || "";
+}
+
 function flattenBatchResults(results) {
   const rows = [];
   for (const r of results) {
+    const input_type = inputTypeLabel(r.input_type);
     if (!r.resolved) {
       rows.push({
-        input_id: r.input_id, account_id: null, account_name: "ID not found", account_owner: null,
+        input_id: r.input_id, input_type, account_id: null, account_name: "ID not found", account_owner: null,
         current_parent_id: null, current_parent_name: null, match_type: "Error",
         suggested_parent_id: null, suggested_parent_name: null, status: "not_found",
       });
@@ -129,7 +163,7 @@ function flattenBatchResults(results) {
     }
     if (r.groups.length === 0) {
       rows.push({
-        input_id: r.input_id, account_id: r.account_id, account_name: r.account_name,
+        input_id: r.input_id, input_type, account_id: r.account_id, account_name: r.account_name,
         account_owner: r.account_owner, current_parent_id: r.current_parent_id,
         current_parent_name: r.current_parent_name, match_type: "No duplicates found",
         suggested_parent_id: null, suggested_parent_name: null, status: "no_duplicates",
@@ -139,7 +173,7 @@ function flattenBatchResults(results) {
     for (const group of r.groups) {
       for (const m of group.members) {
         rows.push({
-          input_id: r.input_id, account_id: m.id, account_name: m.name, account_owner: m.owner_name,
+          input_id: r.input_id, input_type, account_id: m.id, account_name: m.name, account_owner: m.owner_name,
           current_parent_id: m.current_parent_id, current_parent_name: m.current_parent_name,
           match_type: group.matched_label, suggested_parent_id: group.suggested_parent_id,
           suggested_parent_name: group.suggested_parent_name, status: m.status,
@@ -148,6 +182,47 @@ function flattenBatchResults(results) {
     }
   }
   return rows;
+}
+
+// Column order for the CSV export — mirrors the backend's EXPORT_COLUMNS so the
+// client-side CSV and the server-side .xlsx line up.
+const CSV_COLUMNS = [
+  ["input_id", "Input ID"],
+  ["input_type", "Input Type"],
+  ["account_id", "Account ID"],
+  ["account_name", "Account Name"],
+  ["account_owner", "Account Owner"],
+  ["current_parent_id", "Current Parent ID"],
+  ["current_parent_name", "Current Parent Name"],
+  ["match_type", "Match Type"],
+  ["suggested_parent_id", "Suggested Parent ID"],
+  ["suggested_parent_name", "Suggested Parent Name"],
+  ["status", "Status"],
+];
+
+function csvEscape(value) {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function rowsToCsv(rows) {
+  const header = CSV_COLUMNS.map(([, label]) => label).join(",");
+  const body = rows.map((r) => CSV_COLUMNS.map(([key]) => csvEscape(r[key])).join(","));
+  return [header, ...body].join("\r\n");
+}
+
+function downloadCsv(rows, filename) {
+  // Prepend a UTF-8 BOM so Excel opens the file with the right encoding.
+  const blob = new Blob(["﻿" + rowsToCsv(rows)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function App() {
@@ -376,12 +451,20 @@ export default function App() {
               </span>
             )}
             {batchJobId && batchRows && (
-              <a
-                href={`/api/lookup/batch/${batchJobId}/results.xlsx`}
-                className="ml-auto rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
-              >
-                Download Excel
-              </a>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={() => downloadCsv(batchRows, `parent_account_lookup_${batchJobId}.csv`)}
+                  className="rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+                >
+                  Download CSV
+                </button>
+                <a
+                  href={`/api/lookup/batch/${batchJobId}/results.xlsx`}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Download Excel
+                </a>
+              </div>
             )}
           </div>
           {batchError && <p className="mt-2 text-sm text-red-600">{batchError}</p>}
@@ -392,6 +475,7 @@ export default function App() {
                 <thead className="bg-slate-100 text-xs uppercase text-slate-500">
                   <tr>
                     <th className="px-3 py-2">Input ID</th>
+                    <th className="px-3 py-2">Input Type</th>
                     <th className="px-3 py-2">Account ID</th>
                     <th className="px-3 py-2">Account Name</th>
                     <th className="px-3 py-2">Owner</th>
@@ -405,6 +489,7 @@ export default function App() {
                   {batchRows.map((row, i) => (
                     <tr key={i}>
                       <td className="px-3 py-2 font-mono text-xs text-slate-500">{row.input_id}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">{row.input_type || "—"}</td>
                       <td className="px-3 py-2 font-mono text-xs text-slate-600">{row.account_id ?? "—"}</td>
                       <td className="px-3 py-2 text-slate-800">{row.account_name}</td>
                       <td className="px-3 py-2 text-slate-600">{row.account_owner || "—"}</td>

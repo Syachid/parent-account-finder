@@ -422,8 +422,8 @@ export default function App() {
         <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-semibold text-slate-900">Batch lookup</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Paste one Account/Opportunity ID per line, or upload an .xlsx file with a single column
-            of mixed IDs — the type of each ID is auto-detected.
+            Paste one Account/Opportunity ID per line, or upload an .xlsx or .csv file with a single
+            column of mixed IDs — the type of each ID is auto-detected.
           </p>
           <textarea
             value={batchText}
@@ -442,8 +442,8 @@ export default function App() {
             </button>
             <span className="text-sm text-slate-400">or</span>
             <label className="cursor-pointer rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-              Upload .xlsx
-              <input type="file" accept=".xlsx" className="hidden" onChange={handleFileUpload} disabled={batchLoading} />
+              Upload .xlsx / .csv
+              <input type="file" accept=".xlsx,.csv,.tsv,.txt" className="hidden" onChange={handleFileUpload} disabled={batchLoading} />
             </label>
             {batchProgress && (
               <span className="text-xs text-slate-500">

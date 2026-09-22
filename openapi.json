@@ -104,7 +104,7 @@
     },
     "/api/upload": {
       "post": {
-        "summary": "Uploads an .xlsx file whose first column holds a mixed list of Account/Opportunity IDs and starts the same background batch lookup as /api/lookup/batch.",
+        "summary": "Uploads an .xlsx or .csv file whose first column holds a mixed list of Account/Opportunity IDs and starts the same background batch lookup as /api/lookup/batch.",
         "requestBody": {
           "required": true,
           "content": {

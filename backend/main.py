@@ -14,6 +14,7 @@ call happens to rank highly. The mirror is kept in sync by the same
 weekly-background-job + "Sync now" pattern as the Monitor app.
 """
 import asyncio
+import csv
 import io
 import json
 import os
@@ -550,6 +551,22 @@ def _parse_ids_from_xlsx(content: bytes) -> list[int]:
     return _dedupe_ids(values)
 
 
+def _parse_ids_from_csv(content: bytes) -> list[int]:
+    """Reads the first column of a CSV/TSV/plain-text file, one id per row — same
+    contract as _parse_ids_from_xlsx (mixed IDs, header rows silently skipped). The
+    delimiter is sniffed (comma/semicolon/tab/pipe) because Excel "Save as CSV" in
+    some locales writes semicolons; decoding tolerates a UTF-8 BOM."""
+    text = content.decode("utf-8-sig", errors="replace")
+    delimiter = ","
+    try:
+        delimiter = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|").delimiter
+    except csv.Error:
+        pass  # single-column file with no delimiter — comma reader still yields col 0
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    values = (row[0] for row in reader if row)
+    return _dedupe_ids(values)
+
+
 async def _create_job(source: str, total: int) -> int:
     async with _pool.acquire() as conn, conn.cursor() as cur:
         await cur.execute(
@@ -744,10 +761,20 @@ async def upload(file: UploadFile = File(...)):
     if _pool is None:
         raise HTTPException(503, "Database not configured")
     content = await file.read()
+    filename = (file.filename or "").lower()
     try:
-        ids = _parse_ids_from_xlsx(content)
+        if filename.endswith(".xlsx"):
+            ids = _parse_ids_from_xlsx(content)
+        elif filename.endswith((".csv", ".tsv", ".txt")):
+            ids = _parse_ids_from_csv(content)
+        else:
+            # Unknown/blank extension — try Excel first, then fall back to CSV parsing.
+            try:
+                ids = _parse_ids_from_xlsx(content)
+            except Exception:
+                ids = _parse_ids_from_csv(content)
     except Exception:
-        raise HTTPException(400, "Could not read the uploaded file as an .xlsx spreadsheet")
+        raise HTTPException(400, "Could not read the uploaded file — upload an .xlsx or .csv with IDs in the first column")
     if not ids:
         raise HTTPException(400, "No valid IDs found in the first column of the uploaded file")
     if len(ids) > BATCH_MAX_IDS:

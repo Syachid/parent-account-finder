@@ -225,13 +225,27 @@ function downloadCsv(rows, filename) {
   URL.revokeObjectURL(url);
 }
 
-// Backend sends naive UTC datetime strings (no timezone suffix) — parse them as UTC
-// explicitly, otherwise the browser reads them as local time and the "N minutes ago"
-// math comes out hours off.
+// Backend sends naive UTC datetime strings, space-separated (e.g. "2026-09-23
+// 03:29:04", from Python's str(datetime)) rather than ISO's "T" separator — normalize
+// both before parsing as UTC explicitly, otherwise the browser reads them as local
+// time and every derived time (the "N minutes ago" math, the formatted display below)
+// comes out hours off.
 function parseUtc(isoLike) {
   if (!isoLike) return null;
-  const ms = Date.parse(isoLike.endsWith("Z") ? isoLike : isoLike + "Z");
+  const normalized = isoLike.includes("T") ? isoLike : isoLike.replace(" ", "T");
+  const ms = Date.parse(normalized.endsWith("Z") ? normalized : normalized + "Z");
   return Number.isNaN(ms) ? null : ms;
+}
+
+// Renders a backend UTC timestamp in the viewer's own local time/timezone, so "last
+// synced" doesn't require mentally converting from UTC.
+function formatLocal(isoLike) {
+  const ms = parseUtc(isoLike);
+  if (ms == null) return null;
+  return new Date(ms).toLocaleString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
 }
 
 function minutesAgoLabel(startedAtIso, nowMs) {
@@ -433,7 +447,8 @@ export default function App() {
               and correction manually in CRM. This app never writes back to CRM.
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Duplicate detection is based on a mirror last synced: {lastSyncedAt || "never — click Sync now"}
+              Duplicate detection is based on a mirror last synced:{" "}
+              {lastSyncedAt ? formatLocal(lastSyncedAt) : "never — click Sync now"}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">

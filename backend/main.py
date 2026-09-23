@@ -458,14 +458,18 @@ def _account_from_live(record_id: int, acc: dict) -> dict:
     }
 
 
-async def _resolve_account(conn, input_id: int) -> tuple[dict | None, bool, str | None, str | None]:
+async def _resolve_account(conn, input_id: int) -> tuple[dict | None, bool, str | None, str | None, str | None]:
     """Resolves a raw input id to an Account row, trying (in order): the local mirror
     as an Account id; a live Opportunity lookup (-> its account_id) as a Fallback;
     then a live Account lookup as a last resort (covers an Account created after the
-    last sync, or a wrong/edge-case id). Returns (account, in_mirror, note, input_type)
-    where input_type is "account" or "opportunity" (which CRM object the input id
-    turned out to be), or None when the id resolved to nothing — so the UI/export can
-    show, for an Opportunity ID, the Account ID it maps to.
+    last sync, or a wrong/edge-case id). Returns
+    (account, in_mirror, note, input_type, opportunity_stage) where input_type is
+    "account" or "opportunity" (which CRM object the input id turned out to be), or
+    None when the id resolved to nothing — so the UI/export can show, for an
+    Opportunity ID, the Account ID it maps to. opportunity_stage is that Opportunity's
+    CRM `stage` field (e.g. "New", "Proposal Submitted") when input_type is
+    "opportunity", else None — Account lookups have no single Opportunity to report a
+    stage for.
 
     This is a best-effort type sniff, not a guarantee: Account and Opportunity ids are
     separate CRM sequences with non-overlapping observed ranges (confirmed live:
@@ -473,32 +477,33 @@ async def _resolve_account(conn, input_id: int) -> tuple[dict | None, bool, str 
     object types is unlikely but not impossible — a known limitation, not a bug."""
     row = await _fetch_mirror_by_id(conn, input_id)
     if row:
-        return row, True, None, "account"
+        return row, True, None, "account", None
 
     opp = await crm.crm_client.get_record("Opportunity", input_id)
     if opp and opp.get("account_id"):
         acc_id = int(opp["account_id"])
+        stage = opp.get("stage")
         row = await _fetch_mirror_by_id(conn, acc_id)
         if row:
-            return row, True, None, "opportunity"
+            return row, True, None, "opportunity", stage
         acc = await crm.crm_client.get_record("Account", acc_id)
         if acc:
-            return _account_from_live(acc_id, acc), False, "not_in_mirror", "opportunity"
-        return None, False, "opportunity_account_not_found", None
+            return _account_from_live(acc_id, acc), False, "not_in_mirror", "opportunity", stage
+        return None, False, "opportunity_account_not_found", None, None
 
     acc = await crm.crm_client.get_record("Account", input_id)
     if acc:
-        return _account_from_live(input_id, acc), False, "not_in_mirror", "account"
+        return _account_from_live(input_id, acc), False, "not_in_mirror", "account", None
 
-    return None, False, "not_found", None
+    return None, False, "not_found", None, None
 
 
 async def _lookup_single(conn, input_id: int) -> dict:
-    account, in_mirror, note, input_type = await _resolve_account(conn, input_id)
+    account, in_mirror, note, input_type, opportunity_stage = await _resolve_account(conn, input_id)
     if account is None:
         return {
             "input_id": input_id, "resolved": False, "note": note or "not_found",
-            "input_type": input_type,
+            "input_type": input_type, "opportunity_stage": opportunity_stage,
             "account_id": None, "account_name": None, "account_owner": None,
             "current_parent_id": None, "current_parent_name": None,
             "in_mirror": False, "groups": [],
@@ -512,7 +517,7 @@ async def _lookup_single(conn, input_id: int) -> dict:
 
     return {
         "input_id": input_id, "resolved": True, "note": note,
-        "input_type": input_type,
+        "input_type": input_type, "opportunity_stage": opportunity_stage,
         "account_id": account["id"], "account_name": account["name"],
         "account_owner": account.get("owner_name"),
         "current_parent_id": account.get("parent_account_id"),
@@ -603,8 +608,9 @@ async def _run_batch_job(job_id: int, ids: list[int]) -> None:
 
 
 EXPORT_COLUMNS = [
-    "Input ID", "Input Type", "Account ID", "Account Name", "Account Owner", "Current Parent ID",
-    "Current Parent Name", "Match Type", "Suggested Parent ID", "Suggested Parent Name", "Status",
+    "Input ID", "Input Type", "Opportunity Stage", "Account ID", "Account Name", "Account Owner",
+    "Current Parent ID", "Current Parent Name", "Match Type", "Suggested Parent ID",
+    "Suggested Parent Name", "Status",
 ]
 
 _INPUT_TYPE_LABEL = {"account": "Account", "opportunity": "Opportunity"}
@@ -618,12 +624,13 @@ def _export_rows(results: list[dict]) -> list[list]:
     rows = []
     for r in results:
         input_type = _input_type_label(r.get("input_type"))
+        stage = r.get("opportunity_stage")
         if not r["resolved"]:
-            rows.append([r["input_id"], input_type, None, "ID not found", None, None, None, "Error", None, None, "not_found"])
+            rows.append([r["input_id"], input_type, stage, None, "ID not found", None, None, None, "Error", None, None, "not_found"])
             continue
         if not r["groups"]:
             rows.append([
-                r["input_id"], input_type, r["account_id"], r["account_name"], r["account_owner"],
+                r["input_id"], input_type, stage, r["account_id"], r["account_name"], r["account_owner"],
                 r["current_parent_id"], r["current_parent_name"], "No duplicates found",
                 None, None, "no_duplicates",
             ])
@@ -631,7 +638,7 @@ def _export_rows(results: list[dict]) -> list[list]:
         for group in r["groups"]:
             for member in group["members"]:
                 rows.append([
-                    r["input_id"], input_type, member["id"], member["name"], member["owner_name"],
+                    r["input_id"], input_type, stage, member["id"], member["name"], member["owner_name"],
                     member["current_parent_id"], member["current_parent_name"],
                     group["matched_label"], group["suggested_parent_id"], group["suggested_parent_name"],
                     member["status"],

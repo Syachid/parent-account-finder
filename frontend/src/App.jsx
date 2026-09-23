@@ -93,6 +93,14 @@ function SingleResult({ result }) {
             Account ID
           </span>
           <span className="font-mono font-semibold">{result.account_id}</span>
+          {result.opportunity_stage && (
+            <>
+              <span className="ml-2 rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium uppercase text-indigo-700">
+                Stage
+              </span>
+              <span className="font-medium">{result.opportunity_stage}</span>
+            </>
+          )}
         </div>
       )}
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
@@ -153,17 +161,18 @@ function flattenBatchResults(results) {
   const rows = [];
   for (const r of results) {
     const input_type = inputTypeLabel(r.input_type);
+    const opportunity_stage = r.opportunity_stage || "";
     if (!r.resolved) {
       rows.push({
-        input_id: r.input_id, input_type, account_id: null, account_name: "ID not found", account_owner: null,
-        current_parent_id: null, current_parent_name: null, match_type: "Error",
+        input_id: r.input_id, input_type, opportunity_stage, account_id: null, account_name: "ID not found",
+        account_owner: null, current_parent_id: null, current_parent_name: null, match_type: "Error",
         suggested_parent_id: null, suggested_parent_name: null, status: "not_found",
       });
       continue;
     }
     if (r.groups.length === 0) {
       rows.push({
-        input_id: r.input_id, input_type, account_id: r.account_id, account_name: r.account_name,
+        input_id: r.input_id, input_type, opportunity_stage, account_id: r.account_id, account_name: r.account_name,
         account_owner: r.account_owner, current_parent_id: r.current_parent_id,
         current_parent_name: r.current_parent_name, match_type: "No duplicates found",
         suggested_parent_id: null, suggested_parent_name: null, status: "no_duplicates",
@@ -173,10 +182,11 @@ function flattenBatchResults(results) {
     for (const group of r.groups) {
       for (const m of group.members) {
         rows.push({
-          input_id: r.input_id, input_type, account_id: m.id, account_name: m.name, account_owner: m.owner_name,
-          current_parent_id: m.current_parent_id, current_parent_name: m.current_parent_name,
-          match_type: group.matched_label, suggested_parent_id: group.suggested_parent_id,
-          suggested_parent_name: group.suggested_parent_name, status: m.status,
+          input_id: r.input_id, input_type, opportunity_stage, account_id: m.id, account_name: m.name,
+          account_owner: m.owner_name, current_parent_id: m.current_parent_id,
+          current_parent_name: m.current_parent_name, match_type: group.matched_label,
+          suggested_parent_id: group.suggested_parent_id, suggested_parent_name: group.suggested_parent_name,
+          status: m.status,
         });
       }
     }
@@ -189,6 +199,7 @@ function flattenBatchResults(results) {
 const CSV_COLUMNS = [
   ["input_id", "Input ID"],
   ["input_type", "Input Type"],
+  ["opportunity_stage", "Opportunity Stage"],
   ["account_id", "Account ID"],
   ["account_name", "Account Name"],
   ["account_owner", "Account Owner"],
@@ -545,6 +556,7 @@ export default function App() {
                   <tr>
                     <th className="px-3 py-2">Input ID</th>
                     <th className="px-3 py-2">Input Type</th>
+                    <th className="px-3 py-2">Opportunity Stage</th>
                     <th className="px-3 py-2">Account ID</th>
                     <th className="px-3 py-2">Account Name</th>
                     <th className="px-3 py-2">Owner</th>
@@ -559,6 +571,7 @@ export default function App() {
                     <tr key={i}>
                       <td className="px-3 py-2 font-mono text-xs text-slate-500">{row.input_id}</td>
                       <td className="px-3 py-2 text-xs text-slate-500">{row.input_type || "—"}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">{row.opportunity_stage || "—"}</td>
                       <td className="px-3 py-2 font-mono text-xs text-slate-600">{row.account_id ?? "—"}</td>
                       <td className="px-3 py-2 text-slate-800">{row.account_name}</td>
                       <td className="px-3 py-2 text-slate-600">{row.account_owner || "—"}</td>

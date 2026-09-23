@@ -295,6 +295,11 @@
             "enum": ["account", "opportunity"],
             "description": "Which CRM object the input id turned out to be — 'opportunity' means account_id is the Account it maps to. Null when the id resolved to nothing."
           },
+          "opportunity_stage": {
+            "type": "string",
+            "nullable": true,
+            "description": "The Opportunity's CRM 'stage' field (e.g. 'New', 'Proposal Submitted'), present only when input_type is 'opportunity'."
+          },
           "account_id": { "type": "integer", "nullable": true },
           "account_name": { "type": "string", "nullable": true },
           "account_owner": { "type": "string", "nullable": true },

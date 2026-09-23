@@ -532,7 +532,9 @@ async def _lookup_single(conn, input_id: int) -> dict:
 # been rate-limited (429) once today under much lighter load than a large batch would
 # add, so this stays scoped to the one-ID-at-a-time request path.
 _ACQUISITION_TYPE = "Acquisition"
-_STAGE_ENRICH_CONCURRENCY = 3
+# Confirmed live today: this CRM tenant 429'd repeatedly under lighter load than this
+# (see the sync job's own MAX_CONCURRENT_PAGES comment in crm_client.py) — kept low.
+_STAGE_ENRICH_CONCURRENCY = 2
 
 
 async def _fetch_earliest_acquisition_opportunity(account_id: int) -> dict | None:
@@ -549,12 +551,21 @@ async def _fetch_earliest_acquisition_opportunity(account_id: int) -> dict | Non
 
 
 async def _enrich_groups_with_member_stages(groups: list[dict]) -> None:
+    """Best-effort: this enrichment is a nice-to-have on top of the actual duplicate
+    lookup, not something worth failing the whole request over. This CRM tenant is
+    prone to 429s (confirmed live, same as the sync job elsewhere in this app) — a
+    single Account's Opportunity fetch failing must not 500 the entire /api/lookup
+    response, so failures here are swallowed to "no stage available" per Account
+    rather than propagated."""
     account_ids = {m["id"] for g in groups for m in g["members"]}
     semaphore = asyncio.Semaphore(_STAGE_ENRICH_CONCURRENCY)
 
     async def fetch(account_id: int) -> tuple[int, dict | None]:
         async with semaphore:
-            return account_id, await _fetch_earliest_acquisition_opportunity(account_id)
+            try:
+                return account_id, await _fetch_earliest_acquisition_opportunity(account_id)
+            except Exception:
+                return account_id, None
 
     opportunities = dict(await asyncio.gather(*[fetch(aid) for aid in account_ids]))
     for g in groups:

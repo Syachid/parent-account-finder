@@ -225,7 +225,12 @@
         "properties": {
           "in_progress": { "type": "boolean" },
           "last_synced_at": { "type": "string", "nullable": true },
-          "last_result": { "allOf": [{ "$ref": "#/components/schemas/SyncResult" }], "nullable": true }
+          "last_result": { "allOf": [{ "$ref": "#/components/schemas/SyncResult" }], "nullable": true },
+          "current_run_started_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "When the currently in-progress sync run started; null when no sync is running."
+          }
         }
       },
       "BatchStartResult": {

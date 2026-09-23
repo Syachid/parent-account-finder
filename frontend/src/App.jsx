@@ -28,7 +28,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function GroupTable({ group }) {
+function GroupTable({ group, searchedAccountId, opportunityStage }) {
+  // Stage belongs to an Opportunity, not an Account, and an Account can have many
+  // Opportunities in different stages — so this column only has a real answer for the
+  // one row that's the Account actually looked up (via the Opportunity ID that
+  // carried this stage). Other members in the group show "—" rather than a guess.
+  const showStageColumn = Boolean(opportunityStage);
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 px-4 py-2">
@@ -47,6 +52,7 @@ function GroupTable({ group }) {
             <th className="px-4 py-2">Account ID</th>
             <th className="px-4 py-2">Account Name</th>
             <th className="px-4 py-2">Account Owner</th>
+            {showStageColumn && <th className="px-4 py-2">Stage</th>}
             <th className="px-4 py-2">Current Parent</th>
             <th className="px-4 py-2">Status</th>
           </tr>
@@ -57,6 +63,11 @@ function GroupTable({ group }) {
               <td className="px-4 py-2 font-mono text-xs text-slate-600">{m.id}</td>
               <td className="px-4 py-2 text-slate-800">{m.name}</td>
               <td className="px-4 py-2 text-slate-600">{m.owner_name || "—"}</td>
+              {showStageColumn && (
+                <td className="px-4 py-2 text-slate-600">
+                  {m.id === searchedAccountId ? opportunityStage : "—"}
+                </td>
+              )}
               <td className="px-4 py-2 text-slate-600">
                 {m.current_parent_id ? `${m.current_parent_name || "—"} (${m.current_parent_id})` : "—"}
               </td>
@@ -145,7 +156,14 @@ function SingleResult({ result }) {
           No likely duplicates found for this Account.
         </div>
       ) : (
-        result.groups.map((group, i) => <GroupTable key={i} group={group} />)
+        result.groups.map((group, i) => (
+          <GroupTable
+            key={i}
+            group={group}
+            searchedAccountId={result.account_id}
+            opportunityStage={result.opportunity_stage}
+          />
+        ))
       )}
     </div>
   );

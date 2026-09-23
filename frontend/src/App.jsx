@@ -225,11 +225,30 @@ function downloadCsv(rows, filename) {
   URL.revokeObjectURL(url);
 }
 
+// Backend sends naive UTC datetime strings (no timezone suffix) — parse them as UTC
+// explicitly, otherwise the browser reads them as local time and the "N minutes ago"
+// math comes out hours off.
+function parseUtc(isoLike) {
+  if (!isoLike) return null;
+  const ms = Date.parse(isoLike.endsWith("Z") ? isoLike : isoLike + "Z");
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function minutesAgoLabel(startedAtIso, nowMs) {
+  const startedMs = parseUtc(startedAtIso);
+  if (startedMs == null) return null;
+  const mins = Math.max(0, Math.floor((nowMs - startedMs) / 60000));
+  if (mins < 1) return "just started";
+  return `started ${mins} minute${mins === 1 ? "" : "s"} ago`;
+}
+
 export default function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(null);
   const [syncError, setSyncError] = useState(null);
+  const [syncStartedAt, setSyncStartedAt] = useState(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const [singleId, setSingleId] = useState("");
   const [singleLoading, setSingleLoading] = useState(false);
@@ -250,14 +269,54 @@ export default function App() {
       .catch(() => {});
   };
 
+  // Ticks once a minute while a sync is running so the "started N minutes ago" label
+  // stays current without polling the backend any harder than the status loop below.
   useEffect(() => {
-    loadSyncStatus();
+    if (!syncing) return;
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [syncing]);
+
+  const pollSyncStatus = async () => {
+    for (;;) {
+      await sleep(3000);
+      const statusResp = await fetch("/api/sync/status");
+      const status = await statusResp.json();
+      if (status.last_result) setSyncProgress(status.last_result.upserted);
+      if (status.current_run_started_at) setSyncStartedAt(status.current_run_started_at);
+      if (!status.in_progress) {
+        if (status.last_result?.error) setSyncError(`Sync failed: ${status.last_result.error}`);
+        break;
+      }
+    }
+  };
+
+  useEffect(() => {
+    // Picks up a sync that's already running when the page loads — e.g. someone else
+    // clicked "Sync now", or you reloaded mid-sync — instead of showing a stale idle
+    // button while a real sync is in flight.
+    fetch("/api/sync/status")
+      .then((r) => r.json())
+      .then((status) => {
+        setLastSyncedAt(status.last_synced_at);
+        if (status.in_progress) {
+          setSyncing(true);
+          setSyncStartedAt(status.current_run_started_at);
+          pollSyncStatus().finally(() => {
+            setSyncing(false);
+            setSyncProgress(null);
+            setSyncStartedAt(null);
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleSyncNow = async () => {
     setSyncing(true);
     setSyncError(null);
     setSyncProgress(null);
+    setSyncStartedAt(null);
     try {
       const startResp = await fetch("/api/sync/crm", { method: "POST" });
       const start = await startResp.json();
@@ -265,22 +324,14 @@ export default function App() {
         setSyncError(`Sync failed: ${start.error}`);
         return;
       }
-      for (;;) {
-        await sleep(3000);
-        const statusResp = await fetch("/api/sync/status");
-        const status = await statusResp.json();
-        if (status.last_result) setSyncProgress(status.last_result.upserted);
-        if (!status.in_progress) {
-          if (status.last_result?.error) setSyncError(`Sync failed: ${status.last_result.error}`);
-          break;
-        }
-      }
+      await pollSyncStatus();
       loadSyncStatus();
     } catch {
       setSyncError("Sync failed — could not reach the backend");
     } finally {
       setSyncing(false);
       setSyncProgress(null);
+      setSyncStartedAt(null);
     }
   };
 
@@ -393,6 +444,9 @@ export default function App() {
             >
               {syncing ? (syncProgress != null ? `Syncing… (${syncProgress})` : "Syncing…") : "Sync now"}
             </button>
+            {syncing && syncStartedAt && (
+              <span className="text-xs text-slate-400">{minutesAgoLabel(syncStartedAt, nowTick)}</span>
+            )}
             {syncError && <span className="text-xs text-red-600">{syncError}</span>}
           </div>
         </div>

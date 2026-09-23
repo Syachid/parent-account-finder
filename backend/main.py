@@ -668,6 +668,7 @@ class SyncStatus(BaseModel):
     in_progress: bool
     last_synced_at: str | None
     last_result: SyncResult | None
+    current_run_started_at: str | None = None
 
 
 class BatchIdsPayload(BaseModel):
@@ -719,7 +720,12 @@ async def sync_status():
     if _pool is None:
         return {"in_progress": False, "last_synced_at": None, "last_result": None}
     async with _pool.acquire() as conn, conn.cursor() as cur:
-        await cur.execute("SELECT accounts_seen, upserted, error FROM sync_runs ORDER BY id DESC LIMIT 1")
+        # started_at is only meaningful while a run is in progress — it's the run's
+        # own start time, so the UI can show "started N minutes ago" instead of
+        # leaving the user guessing whether a long-running sync is still healthy.
+        await cur.execute(
+            "SELECT accounts_seen, upserted, error, started_at FROM sync_runs ORDER BY id DESC LIMIT 1"
+        )
         row = await cur.fetchone()
         await cur.execute("SELECT MAX(synced_at) FROM accounts_mirror")
         (last_synced,) = await cur.fetchone()
@@ -728,6 +734,7 @@ async def sync_status():
         "in_progress": _sync_in_progress,
         "last_synced_at": str(last_synced) if last_synced else None,
         "last_result": last_result,
+        "current_run_started_at": str(row[3]) if row and _sync_in_progress else None,
     }
 
 

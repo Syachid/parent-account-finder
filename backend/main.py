@@ -526,6 +526,44 @@ async def _lookup_single(conn, input_id: int) -> dict:
     }
 
 
+# Per-Account Opportunity-stage enrichment for the duplicate-match tables — single
+# lookup only (GET /api/lookup), not batch runs: it's one extra live CRM call per
+# distinct Account shown across a lookup's groups, and this CRM tenant has already
+# been rate-limited (429) once today under much lighter load than a large batch would
+# add, so this stays scoped to the one-ID-at-a-time request path.
+_ACQUISITION_TYPE = "Acquisition"
+_STAGE_ENRICH_CONCURRENCY = 3
+
+
+async def _fetch_earliest_acquisition_opportunity(account_id: int) -> dict | None:
+    """That Account's earliest-created Acquisition-type Opportunity (earliest by
+    created_at) — chosen over "most recent" because Sales Ops wants to see progress
+    from where an Account's acquisition effort actually started, not whatever
+    Opportunity happens to be newest. Returns {"name", "stage"}, or None if the
+    Account has no Acquisition Opportunity."""
+    opps = await crm.crm_client.list_opportunities_by_account(account_id, opportunity_type=_ACQUISITION_TYPE)
+    if not opps:
+        return None
+    earliest = min(opps, key=lambda o: _parse_dt(o.get("created_at")) or datetime.max)
+    return {"name": earliest.get("name"), "stage": earliest.get("stage")}
+
+
+async def _enrich_groups_with_member_stages(groups: list[dict]) -> None:
+    account_ids = {m["id"] for g in groups for m in g["members"]}
+    semaphore = asyncio.Semaphore(_STAGE_ENRICH_CONCURRENCY)
+
+    async def fetch(account_id: int) -> tuple[int, dict | None]:
+        async with semaphore:
+            return account_id, await _fetch_earliest_acquisition_opportunity(account_id)
+
+    opportunities = dict(await asyncio.gather(*[fetch(aid) for aid in account_ids]))
+    for g in groups:
+        for m in g["members"]:
+            opp = opportunities.get(m["id"])
+            m["stage"] = opp["stage"] if opp else None
+            m["opportunity_name"] = opp["name"] if opp else None
+
+
 # ---------------------------------------------------------------------------
 # Batch jobs (paste or Excel upload)
 # ---------------------------------------------------------------------------
@@ -748,12 +786,16 @@ async def sync_status():
 @app.get("/api/lookup")
 async def lookup(id: int):
     """Synchronous single-ID lookup — resolves the id (Account or Opportunity) and
-    returns its candidate duplicate groups. Fast enough to run inline: a handful of
-    indexed mirror queries, no full-table scans."""
+    returns its candidate duplicate groups, each member enriched with its earliest
+    Acquisition-Opportunity Stage (one live CRM call per distinct Account across all
+    groups — see _enrich_groups_with_member_stages for why this is single-lookup-only)."""
     if _pool is None:
         raise HTTPException(503, "Database not configured")
     async with _pool.acquire() as conn:
-        return await _lookup_single(conn, id)
+        result = await _lookup_single(conn, id)
+    if result["resolved"] and result["groups"]:
+        await _enrich_groups_with_member_stages(result["groups"])
+    return result
 
 
 @app.post("/api/lookup/batch", response_model=BatchStartResult)

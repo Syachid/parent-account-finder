@@ -28,12 +28,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function GroupTable({ group, searchedAccountId, opportunityStage }) {
-  // Stage belongs to an Opportunity, not an Account, and an Account can have many
-  // Opportunities in different stages — so this column only has a real answer for the
-  // one row that's the Account actually looked up (via the Opportunity ID that
-  // carried this stage). Other members in the group show "—" rather than a guess.
-  const showStageColumn = Boolean(opportunityStage);
+function GroupTable({ group }) {
+  // Each member's `stage`/`opportunity_name` come from its earliest-created
+  // Acquisition-type Opportunity, fetched from CRM per Account by the backend (single
+  // lookup only — see _enrich_groups_with_member_stages in main.py). "—" means that
+  // Account has no Acquisition Opportunity, not that the value is missing.
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 px-4 py-2">
@@ -52,7 +51,8 @@ function GroupTable({ group, searchedAccountId, opportunityStage }) {
             <th className="px-4 py-2">Account ID</th>
             <th className="px-4 py-2">Account Name</th>
             <th className="px-4 py-2">Account Owner</th>
-            {showStageColumn && <th className="px-4 py-2">Stage</th>}
+            <th className="px-4 py-2">Opportunity</th>
+            <th className="px-4 py-2">Stage</th>
             <th className="px-4 py-2">Current Parent</th>
             <th className="px-4 py-2">Status</th>
           </tr>
@@ -63,11 +63,8 @@ function GroupTable({ group, searchedAccountId, opportunityStage }) {
               <td className="px-4 py-2 font-mono text-xs text-slate-600">{m.id}</td>
               <td className="px-4 py-2 text-slate-800">{m.name}</td>
               <td className="px-4 py-2 text-slate-600">{m.owner_name || "—"}</td>
-              {showStageColumn && (
-                <td className="px-4 py-2 text-slate-600">
-                  {m.id === searchedAccountId ? opportunityStage : "—"}
-                </td>
-              )}
+              <td className="px-4 py-2 text-slate-600">{m.opportunity_name || "—"}</td>
+              <td className="px-4 py-2 text-slate-600">{m.stage || "—"}</td>
               <td className="px-4 py-2 text-slate-600">
                 {m.current_parent_id ? `${m.current_parent_name || "—"} (${m.current_parent_id})` : "—"}
               </td>
@@ -157,12 +154,7 @@ function SingleResult({ result }) {
         </div>
       ) : (
         result.groups.map((group, i) => (
-          <GroupTable
-            key={i}
-            group={group}
-            searchedAccountId={result.account_id}
-            opportunityStage={result.opportunity_stage}
-          />
+          <GroupTable key={i} group={group} />
         ))
       )}
     </div>

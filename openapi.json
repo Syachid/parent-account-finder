@@ -52,7 +52,7 @@
     },
     "/api/lookup": {
       "get": {
-        "summary": "Resolves a single Account ID or Opportunity ID and returns that Account's candidate duplicate-name groups (exact name, fuzzy name, shared phone/NPWP/identification number), each with current and suggested Parent Account.",
+        "summary": "Resolves a single Account ID or Opportunity ID and returns that Account's candidate duplicate-name groups (exact name, fuzzy name, shared phone/NPWP/identification number), each with current and suggested Parent Account, and each member enriched with its Acquisition-Opportunity Stage.",
         "parameters": [
           {
             "name": "id",
@@ -262,6 +262,16 @@
           "status": {
             "type": "string",
             "enum": ["is_suggested_parent", "already_under_suggested_parent", "needs_mapping"]
+          },
+          "stage": {
+            "type": "string",
+            "nullable": true,
+            "description": "Stage of this Account's earliest-created Acquisition-type Opportunity. Only populated by GET /api/lookup (single lookup); absent/null in batch results. Null when the Account has no Acquisition Opportunity."
+          },
+          "opportunity_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Name of that same earliest-created Acquisition-type Opportunity. Same population rules as stage."
           }
         }
       },

@@ -160,6 +160,26 @@ class CrmClient:
 
         return records
 
+    async def list_opportunities_by_account(self, account_id: int, opportunity_type: str | None = None) -> list[dict]:
+        """GET /objects/Opportunity/records?account_id=X[&type=Y] — used to enrich a
+        single-lookup's duplicate-match table with each Account's Opportunity stage.
+        One Account rarely has more than a handful of Opportunities, so a single
+        page_size=100 page is assumed to cover it (no pagination). Uses the same small
+        retry budget as get_record since this is on the request path for /api/lookup,
+        run once per Account shown in the duplicate-match tables."""
+        if not self._configured:
+            return []
+        params: dict = {"account_id": account_id, "page_size": 100}
+        if opportunity_type is not None:
+            params["type"] = opportunity_type
+        async with self._client() as client:
+            resp = await _retry_get(
+                client, "/objects/Opportunity/records", params,
+                RECORD_RETRY_ATTEMPTS, RECORD_RETRY_BASE_DELAY_SECONDS,
+            )
+            resp.raise_for_status()
+            return resp.json().get("items", [])
+
     async def get_record(self, object_type: str, record_id: int) -> dict | None:
         """GET /objects/{object_type}/records/{id} -> {..., data: {...fields...}}.
         Used for live Opportunity->Account resolution and as a fallback when a looked-up

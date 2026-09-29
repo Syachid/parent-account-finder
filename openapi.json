@@ -230,6 +230,11 @@
             "type": "string",
             "nullable": true,
             "description": "When the currently in-progress sync run started; null when no sync is running."
+          },
+          "current_run_expected_total": {
+            "type": "integer",
+            "nullable": true,
+            "description": "CRM's reported total Account count for the in-progress sync (for a done/total progress display); null when no sync is running or before the first page arrives."
           }
         }
       },

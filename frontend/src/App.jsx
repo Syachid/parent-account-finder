@@ -317,7 +317,11 @@ export default function App() {
       await sleep(3000);
       const statusResp = await fetch("/api/sync/status");
       const status = await statusResp.json();
-      if (status.last_result) setSyncProgress(status.last_result.upserted);
+      if (status.last_result) {
+        const done = status.last_result.upserted.toLocaleString();
+        const total = status.current_run_expected_total;
+        setSyncProgress(total ? `${done} / ${total.toLocaleString()}` : done);
+      }
       if (status.current_run_started_at) setSyncStartedAt(status.current_run_started_at);
       if (!status.in_progress) {
         if (status.last_result?.error) setSyncError(`Sync failed: ${status.last_result.error}`);

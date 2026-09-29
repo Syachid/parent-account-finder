@@ -45,7 +45,7 @@ about.
 
 **CRM integration:** `backend/crm_client.py` — same REST contract as the sibling
 Monitor and EKYC apps' `crm_client.py` (`X-API-Key` auth, `/api/v1/objects/...`), but
-read-only: `list_all_accounts()` (paginated, for the sync) and `get_record()` (single
+read-only: `iter_account_pages()` (paginated, streamed page-by-page into the mirror during sync) and `get_record()` (single
 record, for live ID resolution). No write methods.
 
 <!-- BEGIN substrait-app contract (v7) — managed by the substrait plugin (link/deploy); edits inside this block are overwritten on update. Delete the whole block to opt out. -->

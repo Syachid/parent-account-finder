@@ -14,9 +14,14 @@ purpose, since Account write permission for this API key has never been confirme
 out of scope per the approved plan: lookup and flag only, no CRM writes).
 """
 import asyncio
+import logging
 import os
 
 import httpx
+
+# uvicorn's own logger is already wired to stdout, so these lines show up in the
+# platform's runtime logs (/substrait:logs) without extra logging setup.
+logger = logging.getLogger("uvicorn.error")
 
 CRM_API_BASE_URL = os.getenv("CRM_API_BASE_URL", "").rstrip("/")
 CRM_API_KEY = os.getenv("CRM_API_KEY", "")
@@ -90,6 +95,10 @@ async def _retry_get(
                     delay = max(delay, min(float(retry_after), max_delay))
                 except ValueError:
                     pass
+            logger.warning(
+                "CRM GET %s %s failed (%s), retry %s/%s in %.0fs",
+                path, params.get("page", ""), last_error, attempt + 1, attempts - 1, delay,
+            )
             await asyncio.sleep(delay)
     raise last_error
 
@@ -109,9 +118,13 @@ class CrmClient:
             timeout=30.0,
         )
 
-    async def list_all_accounts(self, record_type_id: int | None = None) -> list[dict]:
-        """Fetches every Account the API key's assigned user can see (trimmed to the
-        fields this app uses). Called on every sync (scheduled or manual) rather than
+    async def iter_account_pages(self, record_type_id: int | None = None):
+        """Async generator yielding (page_records, total) as each page of Accounts
+        arrives (trimmed to the fields this app uses), in completion order — so the
+        caller can write each page to the mirror immediately instead of holding the
+        whole 125k+ pull in memory and showing zero progress for the entire fetch.
+        Raises (and cancels the remaining page fetches) if any page exhausts its
+        retries. Called on every sync (scheduled or manual) rather than
         trying to fetch only "new" records — Account has no useful equality filter for
         that, and a full pull also picks up parent_account_id / owner changes made
         manually in CRM after a prior lookup.
@@ -123,7 +136,7 @@ class CrmClient:
         Indonesia Accounts out of every sync. record_type_id is the CRM's own foreign
         key, always populated."""
         if not self._configured:
-            return []
+            return
         params: dict = {"page_size": PAGE_SIZE}
         if record_type_id is not None:
             params["record_type_id"] = record_type_id
@@ -138,10 +151,11 @@ class CrmClient:
             total = body.get("total", 0)
             page_size = body.get("page_size") or PAGE_SIZE
             total_pages = max(1, -(-total // page_size))  # ceil division
+            logger.info("Account sync: %s Accounts across %s pages", total, total_pages)
 
-            records = [_trim(r) for r in body.get("items", [])]
+            yield [_trim(r) for r in body.get("items", [])], total
             if total_pages <= 1:
-                return records
+                return
 
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_PAGES)
 
@@ -154,11 +168,15 @@ class CrmClient:
                     resp.raise_for_status()
                     return [_trim(r) for r in resp.json().get("items", [])]
 
-            pages = await asyncio.gather(*[fetch_page(p) for p in range(2, total_pages + 1)])
-            for page_records in pages:
-                records.extend(page_records)
-
-        return records
+            tasks = [asyncio.create_task(fetch_page(p)) for p in range(2, total_pages + 1)]
+            try:
+                for done, fut in enumerate(asyncio.as_completed(tasks), start=2):
+                    yield await fut, total
+                    if done % 100 == 0:
+                        logger.info("Account sync: %s/%s pages fetched", done, total_pages)
+            finally:
+                for t in tasks:
+                    t.cancel()
 
     async def list_opportunities_by_account(self, account_id: int, opportunity_type: str | None = None) -> list[dict]:
         """GET /objects/Opportunity/records?account_id=X[&type=Y] — used to enrich a

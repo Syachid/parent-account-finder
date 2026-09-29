@@ -36,6 +36,7 @@ import crm_client as crm
 _pool = None
 _sync_task = None
 _sync_in_progress = False
+_sync_expected_total: int | None = None  # CRM's reported Account total for the running sync
 
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", str(7 * 24 * 3600)))  # weekly
 
@@ -226,32 +227,37 @@ async def do_sync(trigger: str = "manual") -> dict:
         await cur.execute("SELECT LAST_INSERT_ID()")
         (run_id,) = await cur.fetchone()
 
+    global _sync_expected_total
+    _sync_expected_total = None
     try:
-        accounts = await crm.crm_client.list_all_accounts(record_type_id=ACCOUNT_RECORD_TYPE_ID)
-        seen = len(accounts)
         # Every row touched by this run gets the SAME synced_at, truncated to whole
         # seconds (MySQL DATETIME has no fractional precision) — see the Monitor app's
         # do_sync for why a microsecond-bearing "now" would otherwise delete every row
         # this run just inserted.
         now = datetime.utcnow().replace(microsecond=0)
 
-        rows = [
-            (
-                acc["id"], acc["name"], normalize_name(acc["name"]), acc.get("owner_id"), acc.get("owner_name"),
-                acc.get("parent_account_id"), acc.get("phone"), acc.get("tax_id"), acc.get("identification_number"),
-                _normalize_identity_value(acc.get("phone")), _normalize_identity_value(acc.get("tax_id")),
-                _normalize_identity_value(acc.get("identification_number")),
-                _parse_dt(acc.get("created_at")), now,
-            )
-            for acc in accounts
-            if acc.get("id") is not None and acc.get("name")
-        ]
-
         async with _pool.acquire() as conn, conn.cursor() as cur:
-            for i in range(0, len(rows), UPSERT_BATCH_SIZE):
-                batch = rows[i : i + UPSERT_BATCH_SIZE]
-                await cur.executemany(UPSERT_SQL, batch)
-                upserted += len(batch)
+            # Each page is upserted as soon as it arrives, so the UI's progress counter
+            # moves during the (long, rate-limited) CRM pull instead of sitting at 0
+            # until every page is in. If a page ultimately fails, the pages already
+            # written stay (fresher data), and the prune below is skipped.
+            async for page, total in crm.crm_client.iter_account_pages(record_type_id=ACCOUNT_RECORD_TYPE_ID):
+                _sync_expected_total = total
+                seen += len(page)
+                rows = [
+                    (
+                        acc["id"], acc["name"], normalize_name(acc["name"]), acc.get("owner_id"), acc.get("owner_name"),
+                        acc.get("parent_account_id"), acc.get("phone"), acc.get("tax_id"), acc.get("identification_number"),
+                        _normalize_identity_value(acc.get("phone")), _normalize_identity_value(acc.get("tax_id")),
+                        _normalize_identity_value(acc.get("identification_number")),
+                        _parse_dt(acc.get("created_at")), now,
+                    )
+                    for acc in page
+                    if acc.get("id") is not None and acc.get("name")
+                ]
+                if rows:
+                    await cur.executemany(UPSERT_SQL, rows)
+                    upserted += len(rows)
                 await cur.execute(
                     "UPDATE sync_runs SET accounts_seen=%s, upserted=%s WHERE id=%s",
                     (seen, upserted, run_id),
@@ -725,6 +731,7 @@ class SyncStatus(BaseModel):
     last_synced_at: str | None
     last_result: SyncResult | None
     current_run_started_at: str | None = None
+    current_run_expected_total: int | None = None
 
 
 class BatchIdsPayload(BaseModel):
@@ -791,6 +798,7 @@ async def sync_status():
         "last_synced_at": str(last_synced) if last_synced else None,
         "last_result": last_result,
         "current_run_started_at": str(row[3]) if row and _sync_in_progress else None,
+        "current_run_expected_total": _sync_expected_total if _sync_in_progress else None,
     }
 
 

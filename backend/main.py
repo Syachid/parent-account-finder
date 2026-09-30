@@ -56,6 +56,19 @@ FUZZY_SIMILARITY_THRESHOLD = 88
 FUZZY_MAX_BLOCK_SIZE = 300
 _FUZZY_BLOCK_STOPWORDS = {"pt", "cv", "ud", "toko", "the", "pt.", "cv."}
 
+# Name-prefix matching: catches sibling Accounts of one company that differ only in a
+# trailing project/service suffix, e.g. "PT. Sinbad Karya Perdagangan Project
+# Electronik - Regular (B2BR)" vs "... Project Regen - HW (B2BR)" — token_sort_ratio
+# scores those 80-83 (the differing suffix words drag the whole-name score below 88),
+# so fuzzy matching misses them. Key = the first N words after leading legal-entity
+# words (PT/CV/UD/Toko); names shorter than that are left to exact/fuzzy matching.
+# Queried as an indexed normalized_name prefix range, so no extra column or sync step.
+NAME_PREFIX_WORDS = 3
+_NAME_PREFIX_LEADING_WORDS = ["pt", "cv", "ud", "toko", "the"]
+# A common prefix (e.g. "sumber rejeki jaya") can pull in many unrelated Accounts —
+# cap the group so it stays reviewable (and the per-member stage enrichment bounded).
+NAME_PREFIX_MAX_MEMBERS = 50
+
 # Identity matching: Accounts sharing the same phone / NPWP (tax_id) / identification
 # number almost certainly belong to the same company, even when names differ too much
 # for name-based matching. (digits_column, raw_column, display label) — the digits
@@ -326,6 +339,40 @@ async def _fetch_identity_group_members(conn, digits_col: str, value: str, exclu
     return [_row_to_dict(r) for r in rows]
 
 
+def _name_prefix_key(normalized_name: str) -> str | None:
+    words = (normalized_name or "").split()
+    while words and words[0] in _NAME_PREFIX_LEADING_WORDS:
+        words = words[1:]
+    if len(words) < NAME_PREFIX_WORDS:
+        return None
+    return " ".join(words[:NAME_PREFIX_WORDS])
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _fetch_name_prefix_members(conn, prefix_key: str, exclude_id: int) -> list[dict]:
+    """Accounts whose normalized name starts with prefix_key as whole words, with or
+    without one leading legal-entity word ("sinbad karya perdagangan ..." and
+    "pt sinbad karya perdagangan ..." both match). Each OR branch is an index range
+    on idx_normalized_name. Returns up to NAME_PREFIX_MAX_MEMBERS others — one more
+    than fits beside the target member, so the caller can tell it hit the cap."""
+    starts = [prefix_key] + [f"{w} {prefix_key}" for w in _NAME_PREFIX_LEADING_WORDS]
+    clauses, params = [], []
+    for s in starts:
+        clauses.append("normalized_name = %s OR normalized_name LIKE %s")
+        params += [s, _escape_like(s) + " %"]
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"SELECT {', '.join(_MIRROR_FIELDS)} FROM accounts_mirror "
+            f"WHERE ({' OR '.join(clauses)}) AND id != %s ORDER BY name LIMIT %s",
+            (*params, exclude_id, NAME_PREFIX_MAX_MEMBERS),
+        )
+        rows = await cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 async def _fetch_fuzzy_pairs(conn, normalized_name: str) -> list[tuple[str, int]]:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -416,7 +463,8 @@ async def _build_group(conn, match_type: str, matched_label: str, members: list[
 async def _lookup_account_groups(conn, account: dict) -> list[dict]:
     """Finds this Account's candidate duplicate groups — exact name, fuzzy name, and
     shared phone/NPWP/identification number — the same three signals the Monitor app
-    uses, but scoped to just this one Account instead of the whole mirror."""
+    uses, but scoped to just this one Account instead of the whole mirror — plus a
+    same-name-prefix group (see NAME_PREFIX_WORDS) that the Monitor app doesn't have."""
     groups = []
     target_member = {f: account.get(f) for f in _MIRROR_FIELDS}
 
@@ -432,6 +480,23 @@ async def _lookup_account_groups(conn, account: dict) -> list[dict]:
                 conn, "fuzzy_name", f"Fuzzy Name Match ({similarity}%)", [target_member] + others
             )
             group["similarity"] = similarity
+            groups.append(group)
+
+    prefix_key = _name_prefix_key(account["normalized_name"])
+    if prefix_key:
+        others = await _fetch_name_prefix_members(conn, prefix_key, account["id"])
+        # Fetched one past what fits beside the target member, to detect the cap.
+        truncated = len(others) > NAME_PREFIX_MAX_MEMBERS - 1
+        others = others[: NAME_PREFIX_MAX_MEMBERS - 1]
+        # Skip when it adds nothing beyond the exact-name group already shown.
+        exact_ids = {m["id"] for m in exact_others}
+        if others and {m["id"] for m in others} != exact_ids:
+            label = f'Same Name Prefix: "{prefix_key}"'
+            if truncated:
+                label += f" (first {NAME_PREFIX_MAX_MEMBERS} shown)"
+            group = await _build_group(conn, "name_prefix", label, [target_member] + others)
+            group["matched_prefix"] = prefix_key
+            group["truncated"] = truncated
             groups.append(group)
 
     for digits_col, raw_col, label in IDENTITY_FIELDS:

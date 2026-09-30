@@ -36,7 +36,11 @@ a bug.
 **Matching logic (ported from the Monitor app, scoped to one Account instead of the
 whole mirror):** exact normalized-name match, fuzzy name match (rapidfuzz
 `token_sort_ratio` ≥ 88, computed at sync time into `fuzzy_matches`), and shared
-phone/NPWP/identification-number. Suggested parent per group: the existing parent used
+phone/NPWP/identification-number. Plus one signal the Monitor app lacks: a **same name
+prefix** group (first 3 words after PT/CV/UD/Toko, e.g. "sinbad karya perdagangan", capped
+at 50 members) — sibling Accounts like "... Project Electronik - Regular" vs "... Project
+Regen - HW" score only 80-83 on token_sort_ratio because the differing suffix drags the
+whole-name score down. Suggested parent per group: the existing parent used
 by the most group members (majority vote), else the oldest-created member — same as
 the Monitor app's `_summarize_group`. Unlike the Monitor's dashboard (which hides
 already-correctly-parented Accounts), this app shows every group member with a

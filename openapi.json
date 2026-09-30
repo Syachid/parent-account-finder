@@ -283,7 +283,7 @@
       "LookupGroup": {
         "type": "object",
         "properties": {
-          "match_type": { "type": "string", "enum": ["exact_name", "fuzzy_name", "identity"] },
+          "match_type": { "type": "string", "enum": ["exact_name", "fuzzy_name", "name_prefix", "identity"] },
           "matched_label": { "type": "string" },
           "has_existing_parent": { "type": "boolean" },
           "suggested_parent_id": { "type": "integer", "nullable": true },
@@ -291,6 +291,8 @@
           "similarity": { "type": "integer", "nullable": true, "description": "0-100, only present for fuzzy_name groups." },
           "matched_field": { "type": "string", "nullable": true, "description": "Phone / NPWP / Identification Number, only present for identity groups." },
           "matched_value": { "type": "string", "nullable": true },
+          "matched_prefix": { "type": "string", "nullable": true, "description": "The shared first words (after PT/CV/UD/Toko), only present for name_prefix groups." },
+          "truncated": { "type": "boolean", "nullable": true, "description": "Only present for name_prefix groups: true when the group hit its member cap." },
           "members": { "type": "array", "items": { "$ref": "#/components/schemas/GroupMember" } }
         }
       },
